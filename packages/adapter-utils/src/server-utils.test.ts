@@ -221,8 +221,61 @@ describe("runChildProcess", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.timedOut).toBe(false);
+    expect(result.stoppedBy).toBeNull();
     expect(result.stdout).toBe("done");
   });
+
+  it.skipIf(process.platform === "win32")(
+    "keeps timedOut consistent with stoppedBy on every exit path (G3)",
+    async () => {
+      function expectConsistentStoppedBy(result: { timedOut: boolean; stoppedBy: string | null }) {
+        expect(result.timedOut).toBe(result.stoppedBy === "timeout");
+      }
+
+      const ordinaryExit = await runChildProcess(
+        randomUUID(),
+        process.execPath,
+        ["-e", "process.stdout.write('done');"],
+        { cwd: process.cwd(), env: {}, timeoutSec: 0, graceSec: 1, onLog: async () => {} },
+      );
+      expectConsistentStoppedBy(ordinaryExit);
+      expect(ordinaryExit.stoppedBy).toBeNull();
+
+      const timedOutRun = await runChildProcess(
+        randomUUID(),
+        process.execPath,
+        ["-e", "setInterval(() => {}, 1000);"],
+        { cwd: process.cwd(), env: {}, timeoutSec: 1, graceSec: 1, onLog: async () => {} },
+      );
+      expectConsistentStoppedBy(timedOutRun);
+      expect(timedOutRun.stoppedBy).toBe("timeout");
+
+      const cleanupKilledRun = await runChildProcess(
+        randomUUID(),
+        process.execPath,
+        [
+          "-e",
+          [
+            "process.stdout.write(`${JSON.stringify({ type: 'result', result: 'done' })}\\n`);",
+            "setInterval(() => {}, 1000);",
+          ].join(" "),
+        ],
+        {
+          cwd: process.cwd(),
+          env: {},
+          timeoutSec: 0,
+          graceSec: 1,
+          onLog: async () => {},
+          terminalResultCleanup: {
+            graceMs: 100,
+            hasTerminalResult: ({ stdout }) => stdout.includes('"type":"result"'),
+          },
+        },
+      );
+      expectConsistentStoppedBy(cleanupKilledRun);
+      expect(cleanupKilledRun.stoppedBy).toBe("terminal_result_cleanup");
+    },
+  );
 
   it("waits for onSpawn before sending stdin to the child", async () => {
     const spawnDelayMs = 150;
@@ -351,6 +404,45 @@ describe("runChildProcess", () => {
     expect(result.signal).toBe("SIGTERM");
     expect(result.stdout).toContain('"type":"result"');
   });
+
+  it.skipIf(process.platform === "win32")(
+    "names the cleanup kill even when the child traps SIGTERM and self-exits nonzero (G1)",
+    async () => {
+      // Regression for the SHIP-1350 misclassification: a child that emits a clean
+      // terminal result but keeps running, then traps SIGTERM and exits 143 on its
+      // own, must be distinguishable from a real crash. Before this fix, the only
+      // signal available downstream was `timedOut`, which stayed false here — the
+      // caller had no way to know the 143 came from our own cleanup, not a fault.
+      const result = await runChildProcess(
+        randomUUID(),
+        process.execPath,
+        [
+          "-e",
+          [
+            "process.on('SIGTERM', () => process.exit(143));",
+            "process.stdout.write(`${JSON.stringify({ type: 'result', result: 'done' })}\\n`);",
+            "setInterval(() => {}, 1000);",
+          ].join(" "),
+        ],
+        {
+          cwd: process.cwd(),
+          env: {},
+          timeoutSec: 0,
+          graceSec: 1,
+          onLog: async () => {},
+          terminalResultCleanup: {
+            graceMs: 100,
+            hasTerminalResult: ({ stdout }) => stdout.includes('"type":"result"'),
+          },
+        },
+      );
+
+      expect(result.timedOut).toBe(false);
+      expect(result.exitCode).toBe(143);
+      expect(result.signal).toBeNull();
+      expect(result.stoppedBy).toBe("terminal_result_cleanup");
+    },
+  );
 
   it.skipIf(process.platform === "win32")("does not clean up noisy runs that have no terminal output", async () => {
     const runId = randomUUID();

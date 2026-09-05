@@ -14,7 +14,14 @@ import type {
 export interface RunProcessResult {
   exitCode: number | null;
   signal: string | null;
+  /** Legacy boolean form of `stoppedBy === "timeout"`; must never drift from it. */
   timedOut: boolean;
+  /**
+   * Names the kill this function itself issued, or null if the process exited
+   * on its own. `timedOut` is the legacy boolean form of "timeout" and MUST
+   * stay consistent with it: timedOut === (stoppedBy === "timeout").
+   */
+  stoppedBy: "timeout" | "terminal_result_cleanup" | null;
   stdout: string;
   stderr: string;
   pid: number | null;
@@ -1960,7 +1967,7 @@ export async function runChildProcess(
 
         runningProcesses.set(runId, { child, graceSec: opts.graceSec, processGroupId });
 
-        let timedOut = false;
+        let stoppedBy: RunProcessResult["stoppedBy"] = null;
         let stdout = "";
         let stderr = "";
         let logChain: Promise<void> = Promise.resolve();
@@ -1980,7 +1987,7 @@ export async function runChildProcess(
 
         const maybeArmTerminalResultCleanup = () => {
           const terminalCleanup = opts.terminalResultCleanup;
-          if (!terminalCleanup || terminalCleanupStarted || timedOut) return;
+          if (!terminalCleanup || terminalCleanupStarted || stoppedBy === "timeout") return;
           if (!terminalResultSeen) {
             const stdoutStart = Math.max(0, terminalResultStdoutScanOffset - TERMINAL_RESULT_SCAN_OVERLAP_CHARS);
             const stderrStart = Math.max(0, terminalResultStderrScanOffset - TERMINAL_RESULT_SCAN_OVERLAP_CHARS);
@@ -2003,8 +2010,9 @@ export async function runChildProcess(
           const graceMs = Math.max(0, terminalCleanup.graceMs ?? 5_000);
           terminalCleanupTimer = setTimeout(() => {
             terminalCleanupTimer = null;
-            if (terminalCleanupStarted || timedOut) return;
+            if (terminalCleanupStarted || stoppedBy === "timeout") return;
             terminalCleanupStarted = true;
+            stoppedBy = "terminal_result_cleanup";
             signalRunningProcess({ child, processGroupId }, "SIGTERM");
             terminalCleanupKillTimer = setTimeout(() => {
               terminalCleanupKillTimer = null;
@@ -2025,7 +2033,7 @@ export async function runChildProcess(
         // original wall-clock timeout.
 
         const fireTimeout = () => {
-          timedOut = true;
+          stoppedBy = "timeout";
           clearTerminalCleanupTimers();
           signalRunningProcess({ child, processGroupId }, "SIGTERM");
           setTimeout(() => {
@@ -2142,7 +2150,8 @@ export async function runChildProcess(
               resolve({
                 exitCode: code,
                 signal,
-                timedOut,
+                timedOut: stoppedBy === "timeout",
+                stoppedBy,
                 stdout,
                 stderr,
                 pid: child.pid ?? null,

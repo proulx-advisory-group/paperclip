@@ -317,6 +317,7 @@ function stopReasonLabel(run: RunForIssue) {
   if (stopReason === "paused") return "paused by board";
   if (stopReason === "process_lost") return "process lost";
   if (stopReason === "adapter_failed") return "adapter failed";
+  if (stopReason === "unclassified") return "unclassified";
   if (stopReason === "completed") return timeoutText ? `completed (${timeoutText})` : "completed";
   return timeoutText;
 }

@@ -7752,7 +7752,11 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         outcome = latestRun.status;
       } else if (adapterResult.timedOut) {
         outcome = "timed_out";
-      } else if ((adapterResult.exitCode ?? 0) === 0 && !adapterResult.errorMessage) {
+      } else if (!adapterResult.errorMessage) {
+        // Each adapter's own execute() is the authority on pass/fail — it already
+        // accounts for exit codes that don't mean failure (e.g. a clean result
+        // killed by our own terminalResultCleanup, SHIP-1350). Re-checking
+        // exitCode here would override that verdict with the raw exit code.
         outcome = "succeeded";
       } else {
         outcome = "failed";

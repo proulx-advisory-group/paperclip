@@ -8,7 +8,8 @@ export type HeartbeatRunStopReason =
   | "paused"
   | "max_turns_exhausted"
   | "process_lost"
-  | "adapter_failed";
+  | "adapter_failed" // ONLY when an adapter fault was positively identified
+  | "unclassified"; // the fallback — we do not know why this run ended
 
 export interface HeartbeatRunTimeoutPolicy {
   effectiveTimeoutSec: number | null;
@@ -93,7 +94,7 @@ export function inferHeartbeatRunStopReason(input: {
     if (message.includes("pause") || message.includes("paused")) return "paused";
     return "cancelled";
   }
-  return "adapter_failed";
+  return "unclassified";
 }
 
 export function buildHeartbeatRunStopMetadata(input: {

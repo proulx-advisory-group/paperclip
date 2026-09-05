@@ -92,6 +92,7 @@ export async function resolveEnvironmentExecutionTarget(input: {
                 exitCode: result.exitCode,
                 signal: result.signal ?? null,
                 timedOut: result.timedOut,
+                stoppedBy: result.timedOut ? "timeout" : null,
                 stdout: result.stdout,
                 stderr: result.stderr,
                 pid: null,
